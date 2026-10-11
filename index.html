@@ -72,12 +72,14 @@ const PAL={yellow:['#fff27a','#ffc21e','#e08a00'],orange:['#ffc98a','#ff8a1e','#
  blue:['#a8f0ff','#2bb6ff','#1468c8'],green:['#c8ffa0','#4fd65a','#1f8a34'],black:['#6a6480','#2e2a3a','#16131e'],white:['#ffffff','#eef0f6','#b8bccb']};
 const PAINT_KEYS=['auto','yellow','orange','red','pink','purple','blue','green','black','white'];
 function paintPick(part){const p=save.paint&&save.paint[part];return p&&PAL[p]?PAL[p]:null;}
+// POWER-UPS: consumables bought for the next shift (save.powers[id] = 1 when owned). Add new entries here.
+const POWERUPS=[{id:'swamper',name:'SWAMPER',price:300,desc:'A helper on foot racks your STAGED boxes for one shift (about one every 15-20s). Don\'t run him over!'}];
 function squash(e){return .2*Math.exp(-e*6)*Math.cos(e*24);}
 function upCost(lv){return Math.round(80*Math.pow(1.7,lv)/5)*5;}
 function statVal(k,lv){switch(k){case'speed':return 150*(1+.12*lv);case'accel':return 1800*(1+.16*lv);case'turn':return 3.0*(1+.1*lv);case'lift':return .65*(1+.18*lv);case'stab':return 1/(1+.16*lv);case'batt':return 1+.25*lv;}return 1;}
 function statPct(k,lv){return k==='stab'?Math.round(100/statVal(k,lv)):Math.round(100*statVal(k,lv)/statVal(k,0));}
 function statFx(k,lv){const v=statVal(k,lv);switch(k){case'speed':return (v/10).toFixed(1)+' km/h';case'accel':return 'top speed in '+(statVal('speed',0)/v).toFixed(2)+'s';case'turn':return Math.round(v*57.3)+'°/sec';case'lift':return 'full lift: '+(1/v).toFixed(1)+'s';case'stab':return 'slip rate: '+Math.round(v*100)+'%';case'batt':return '~'+(v*2).toFixed(1)+' min full-speed';}return'';}
-function defSave(){return{cash:0,shift:1,best:0,stats:{speed:0,accel:0,turn:0,lift:0,stab:0,batt:0},mute:false,easy:false,seenHelp:false,shifts:0,gfx:'auto',q:2,fps:false,cam:'std',steerV:2,paint:{body:null,cage:null,forks:null}};}
+function defSave(){return{cash:0,shift:1,best:0,stats:{speed:0,accel:0,turn:0,lift:0,stab:0,batt:0},mute:false,easy:false,seenHelp:false,shifts:0,gfx:'auto',q:2,fps:false,cam:'std',steerV:2,paint:{body:null,cage:null,forks:null},powers:{}};}
 let save=defSave();
 function loadSave(){try{const s=JSON.parse(localStorage.getItem(SAVE_KEY)||'null');if(s&&typeof s==='object'){const d=defSave();save=Object.assign(d,s);save.stats=Object.assign(d.stats,s.stats||{});if(s.steerV!==2){save.easy=false;save.steerV=2;}}}catch(e){}} // forklift-relative steering becomes the default once for old saves
 function writeSave(){try{localStorage.setItem(SAVE_KEY,JSON.stringify(save));}catch(e){}}
@@ -175,6 +177,7 @@ function startShift(){const n=save.shift;btns=[];const _S=effStats(),_bk=boostOn
   st:{put:0,bonus:0,speed:0,damage:0,fines:0,done:0,missed:0,total:0,racked:0,drops:0,crashes:0,bumps:0,strikes:0,clutter:0,clutterFines:0},
   earn:0,banner:null,hint:'',hintCol:'#fff',warn:'',bossCD:2,msgCD:{},camX:750,camY:250,tickT:0};G.S=_S;G.boostK=_bk;
  G.st.total=G.sched.length;
+ if(save.powers&&save.powers.swamper>0){save.powers.swamper=0;writeSave();G.swamper=true;G.people.push(makeSwamper());}
  screen='play';
 }
 
@@ -235,7 +238,8 @@ function update(dt){T+=dt;
  if(G.cd>0){G.cd-=dt;const s=Math.ceil(G.cd);if(s!==G.lastCd){G.lastCd=s;if(s>0)SFX.tick();else SFX.go();}return;}
  if(G.endT>0){G.endT-=dt;G.fl.v*=.9;if(motor)motor.g.gain.value=0;if(G.endT<=0)finishShift();return;}
  G.t+=dt;
- const inp=readInput();
+ let inp=readInput();
+ updateMalfunction(dt,inp);if(G.mal)inp={thr:0,st:0,lift:0};
  updateTrucks(dt);
  updateFL(dt,inp);
  interact(dt,inp);
@@ -432,6 +436,7 @@ function updatePeople(dt){const f=G.fl,cs=bodyCircles(f),P=forkPts(f);
   p.x=clamp(p.x,12,WW-12);p.y=clamp(p.y,12,WH-12);
   if(p.stun>0){p.stun-=dt;continue;}
   if(p.wait>0){p.wait-=dt;continue;}
+  if(p.type==='swamper'){swamperAI(p,dt);continue;}
   const tg=p.path[p.i],dx=tg[0]-p.x,dy=tg[1]-p.y,d=Math.hypot(dx,dy);
   if(d<3){p.i=(p.i+1)%p.path.length;if(p.type==='boss'||Math.random()<.3)p.wait=rnd(.5,p.type==='boss'?3:1.5);continue;}
   const ux=dx/d,uy=dy/d;p.dir=Math.atan2(uy,ux);
@@ -442,6 +447,44 @@ function updatePeople(dt){const f=G.fl,cs=bodyCircles(f),P=forkPts(f);
  G.bossCD-=dt;const boss=G.people.find(p=>p.type==='boss');
  if(boss&&G.bossCD<=0&&dist(boss.x,boss.y,f.x,f.y)<220&&Math.abs(f.v)>115){G.bossCD=4;hurtSafety(5);boss.bub={text:'SLOW DOWN!',t:2};SFX.whistle();pop(f.x,f.y-40,'BOSS SAW YOU SPEEDING -5','#ff6040',17,1.6);}
 }
+// ---- SWAMPER power-up: walks staged boxes to a legal rack slot (lettered -> its rack, gold -> C), normal put-away pay ----
+const SW_HOME=[1060,300];
+function makeSwamper(){return{type:'swamper',path:[SW_HOME],i:0,x:1060,y:300,spd:62,col:'#3dff5a',wait:2,stun:0,inv:0,bub:{text:'SWAMPER ON THE FLOOR!',t:2.5},dir:Math.PI,walk:0,st:'idle',wp:[],box:null,slot:null,racked:0};}
+// on foot he ducks under the rack beams: walk across at the current height, then straight up/down the bay
+function swRoute(fx,fy,tx,ty){if(fy<460&&ty<460)return[[tx,ty]];return fy<ty?[[tx,fy],[tx,ty]]:[[fx,ty],[tx,ty]];}
+function swLen(fx,fy,tx,ty){let L=0,x=fx,y=fy;for(const w of swRoute(fx,fy,tx,ty)){L+=Math.abs(w[0]-x)+Math.abs(w[1]-y);x=w[0];y=w[1];}return L;}
+function swSlot(b){let best=null,bc=1e9;for(let r=0;r<3;r++){const rk=RACKS[r];if(b.tag&&b.tag!==rk.l)continue;const sl=G.racks[r].slots;
+  for(let bay=0;bay<RACK_BAYS;bay++)for(let l=0;l<3;l++)if(!sl[bay][l]){const bx=RACK_X0+bay*BAY_W+50,c=swLen(b.x,b.y+32,bx,rk.y-24)+l*120;if(c<bc){bc=c;best={r,bay,l,x:bx,y:rk.y-24};}break;}}return best;}
+function swamperAI(p,dt){const f=G.fl,P=forkPts(f);
+ if(p.st==='idle'){const b=G.boxes.find(b=>b.state==='staged'&&f.under!==b&&dist(P.lx,P.ly,b.x,b.y)>60&&swSlot(b));
+  if(b){p.box=b;p.st='toBox';p.wp=swRoute(p.x,p.y,b.x,b.y+32);}else if(dist(p.x,p.y,SW_HOME[0],SW_HOME[1])>4&&!p.wp.length)p.wp=swRoute(p.x,p.y,SW_HOME[0],SW_HOME[1]);}
+ if(p.st==='toBox'&&(p.box.state!=='staged'||f.under===p.box)){p.st='idle';p.box=null;p.wp=[];return;}
+ if(!p.wp.length){
+  if(p.st==='toBox'){const b=p.box;if(dist(P.lx,P.ly,b.x,b.y)<60){p.wait=.5;return;}const s=swSlot(b);if(!s){p.st='idle';p.box=null;return;}
+   if(b.spot){b.spot.box=null;b.spot=null;}b.state='swamper';p.slot=s;p.st='toRack';p.wait=.9;p.wp=swRoute(p.x,p.y,s.x,s.y);SFX.click();}
+  else if(p.st==='toRack'){const b=p.box,s0=p.slot;let s=s0;if(G.racks[s.r].slots[s.bay][s.l]){s=swSlot(b);if(!s){p.wait=1;return;}p.slot=s;p.wp=swRoute(p.x,p.y,s.x,s.y);return;}
+   const rk=RACKS[s.r];G.racks[s.r].slots[s.bay][s.l]=b;b.state='rack';b.x=s.x;b.y=rk.y+25;b.lv=s.l;b.ttl=rnd(55,85);b.rack=s.r;b.bay=s.bay;b.sq0=T;
+   const pay=b.value+s.l*4;G.st.put+=pay;G.earn+=pay;G.st.racked++;G.st.swRacked=(G.st.swRacked||0)+1;p.racked++;pop(b.x,b.y-30,'+$'+pay+' SWAMPER','#3dff5a',18,1.3);SFX.cash();
+   p.box=null;p.slot=null;p.st='idle';p.wait=.9;}
+  return;}
+ const tg=p.wp[0],dx=tg[0]-p.x,dy=tg[1]-p.y,d=Math.hypot(dx,dy);if(d<3){p.wp.shift();return;}
+ const ux=dx/d,uy=dy/d;p.dir=Math.atan2(uy,ux);
+ // give way to the forklift: stop when it is in the way ahead
+ const fx=f.x-p.x,fy=f.y-p.y,ahead=fx*ux+fy*uy,lat=Math.abs(-fx*uy+fy*ux);
+ if(ahead>-10&&ahead<80&&lat<46){if(!p.bub&&Math.random()<.01)p.bub={text:'BEEP BEEP!',t:1.2};return;}
+ const sp=p.box&&p.st==='toRack'?p.spd*.85:p.spd;p.x+=ux*sp*dt;p.y+=uy*sp*dt;p.walk+=dt*9;}
+// ---- FORKLIFT MALFUNCTION: 0.09% chance per second of driving (~15% per 3-min shift), max once per shift.
+// Stalls the forklift (no drive/lift) until the player taps ~12-15 times quickly; the bar drains if they stop.
+const MAL_P=.0009,MAL_NEED=12;
+function updateMalfunction(dt,inp){const f=G.fl;
+ if(G.mal){const m=G.mal;m.t+=dt;if(m.fill>=MAL_NEED-.001)m.fill=MAL_NEED;else m.fill=Math.max(0,m.fill-dt*1.0);f.v*=Math.pow(.02,dt);m.smk-=dt;if(m.smk<=0){m.smk=.14;puff(f.x-Math.cos(f.a)*20,f.y-Math.sin(f.a)*20,2,'rgba(90,85,100,');}
+  if(m.fill>=MAL_NEED){G.mal=null;SFX.clunk();SFX.go();pop(f.x,f.y-40,'FIXED!','#3dff5a',22,1.2);puff(f.x,f.y,6);}return;}
+ if(G.malDone||G.endT>0)return;
+ const driving=Math.abs(f.v)>10||Math.abs(inp.thr)>.1;if(!driving)return;
+ G.malAcc=(G.malAcc||0)+dt;if(G.malAcc<1)return;G.malAcc-=1;
+ if(f.carry&&f.rack)return; // never mid rack entry with a load
+ if(Math.random()<(G.malP!==undefined?G.malP:MAL_P)){G.malDone=true;G.mal={t:0,fill:0,smk:0};releaseAll&&releaseAll();SFX.bad();G.shake=8;puff(f.x,f.y,8,'rgba(90,85,100,');}}
+function malTap(){const m=G&&G.mal;if(!m)return false;m.fill=m.fill+1;SFX.click();G.shake=Math.max(G.shake,2);return true;}
 function bump(p){const f=G.fl;p.inv=3;p.stun=1.4;const pen=p.type==='boss'?20:15;hurtSafety(pen);G.st.bumps++;p.bub={text:p.type==='boss'?'YOU\'RE ON THIN ICE!':'OUCH!!',t:2.2};f.v*=.2;G.shake=10;SFX.crash();pop(p.x,p.y-26,'HIT A PERSON! -'+pen,'#ff4040',20,1.8);if(f.carry)f.slip+=.4;}
 // Loads left on the warehouse floor (not staging, not back in a trailer) for 10s cost $5 once.
 // Quick set-downs to re-grip are free.
@@ -638,7 +681,8 @@ function drawPerson(g,p){
  if(p.stun>0)for(let i=0;i<3;i++){const aa=T*6+i*2.1;tdraw(g,'★',p.x+Math.cos(aa)*13,p.y-16+Math.sin(aa)*4,wz(10),'#ffe14d','center',2.5,false,OL,WS);}
  if(p.type==='boss'&&QUAL[QL].fx&&dist(p.x,p.y,G.fl.x,G.fl.y)<340){g.strokeStyle='rgba(255,60,60,.28)';g.lineWidth=3;g.setLineDash([10,9]);g.beginPath();g.arc(p.x,p.y,220,0,7);g.stroke();g.setLineDash([]);}
  if(p.bub)bubble(g,p.x,p.y-24,p.bub.text,p.type==='boss'?'#ff3b30':OL);
- if(p.type==='boss')tdraw(g,'BOSS',p.x,p.y+20,wz(10),'#fff','center',3,false,OL,WS);}
+ if(p.type==='boss')tdraw(g,'BOSS',p.x,p.y+20,wz(10),'#fff','center',3,false,OL,WS);
+ if(p.type==='swamper'){if(p.box&&p.st==='toRack')drawBox(g,p.box,p.x+Math.cos(p.dir)*14,p.y+Math.sin(p.dir)*14-4,.62,0,3);tdraw(g,'SWAMPER',p.x,p.y+20,wz(10),'#3dff5a','center',3,false,OL,WS);}}
 function bubble(g,x,y,text,col){const s=cached('bub'+text+col+Math.round(WS*100),()=>{tctx.font=FONT(12);const w=tctx.measureText(text).width+16,k=WS,c=mkC((w+8)*k,34*k),b=c.getContext('2d');b.scale(k,k);b.translate(2+w/2,22);b.lineJoin='round';
   b.fillStyle='rgba(26,16,40,.35)';rr(b,-w/2+2,-20+3,w,20,10);b.fill();
   const shape=()=>{b.beginPath();const r=10,x0=-w/2,y0=-20,x1=w/2,y1=0;b.moveTo(x0+r,y0);b.arcTo(x1,y0,x1,y1,r);b.arcTo(x1,y1,x0,y1,r);b.lineTo(5,y1);b.lineTo(0,y1+8);b.lineTo(-5,y1);b.arcTo(x0,y1,x0,y0,r);b.arcTo(x0,y0,x1,y0,r);b.closePath();};
@@ -825,6 +869,10 @@ function drawHUD(){ctx.setTransform(DPR,0,0,DPR,0,0);btns=[];const f=G.fl,u=U,m=
   HUD_B=Math.max(sy+ch,top+mw*1.06)+(G.queue.length?16*u:0);fpsY=sy+ch+(G.queue.length?24:12)*u;}
  // controls
  drawControls();
+ if(G.mal&&!G.paused){const m=G.mal,u=U,fl=Math.sin(T*14)>0,bw=Math.min(340*u,W*.8),bh=74*u,bx=W/2-bw/2,by=H*.36-bh/2;panel(bx,by,bw,bh,14*u,fl?'rgba(255,70,50,.96)':'rgba(200,30,30,.96)','rgba(120,10,20,.96)');
+  txt('MALFUNCTION! TAP TAP TAP!',W/2,by+22*u,Math.min(20*u,bw/15),fl?'#fff':'#ffe14d');bar(bx+18*u,by+42*u,bw-36*u,16*u,m.fill/MAL_NEED,'#3dff5a');txt('tap anywhere to fix it',W/2,by+bh+12*u,11*u,'#fff');}
+ if(G.mal&&!G.paused){const m=G.mal,u=U,fl=Math.sin(T*14)>0,bw=Math.min(340*u,W*.8),bh=74*u,bx=W/2-bw/2,by=H*.36-bh/2;panel(bx,by,bw,bh,14*u,fl?'rgba(255,70,50,.96)':'rgba(200,30,30,.96)','rgba(120,10,20,.96)');
+  txt('MALFUNCTION! TAP TAP TAP!',W/2,by+22*u,Math.min(20*u,bw/15),fl?'#fff':'#ffe14d');bar(bx+18*u,by+42*u,bw-36*u,16*u,m.fill/MAL_NEED,'#3dff5a');txt('tap anywhere to fix it',W/2,by+bh+12*u,11*u,'#fff');}
  // fork gauge
  const gr=ctl.gauge;drawGauge(gr.x,gr.y,gr.w,gr.h);
  // hint
@@ -835,6 +883,7 @@ function drawHUD(){ctx.setTransform(DPR,0,0,DPR,0,0);btns=[];const f=G.fl,u=U,m=
  if(G.cd>0){const n=Math.ceil(G.cd);const k=G.cd-Math.floor(G.cd);tdraw(ctx,n>0?String(n):'GO!',W/2,H/2,100*u,n>0?'#ffe14d':'#5dff7a','center',18*u,true,'#1b0f2e',DPR,(60+k*40)/100);txt('SHIFT '+G.shift+' — CLOCKING IN',W/2,H/2+50*u,14*u,'#fff');}
  if(PERF.show&&!G.paused)txt(perfLabel(),left+4*u,fpsY,10,'#9dffb0','left',NOSH2);
  if(G.boostK&&!G.paused)boostBadge(left+2*u,fpsY+(PERF.show?16:4)*u,'left');
+ if(G.swamper&&!G.paused)pill('SWAMPER ON',left+2*u,fpsY+(PERF.show?16:4)*u+(G.boostK?22*u:0),'left','rgba(80,230,110,.95)','rgba(30,150,60,.95)');
  if(G.paused)drawPause();}
 function drawCamBtn(r){const u=U,close=save.cam==='close';panel(r.x,r.y,r.w,r.h,8*u,close?'rgba(30,110,140,.9)':undefined,close?'rgba(10,50,80,.92)':undefined);
  const cx=r.x+r.w/2-2*u,cy=r.y+r.h/2-3*u,R=Math.min(r.w,r.h)*.2;ctx.strokeStyle='#fff';ctx.lineWidth=2.5*u;ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.stroke();ctx.beginPath();ctx.moveTo(cx+R*.7,cy+R*.7);ctx.lineTo(cx+R*1.6,cy+R*1.6);ctx.stroke();
@@ -919,6 +968,7 @@ const LEVERS=[ctl.lift];
 cv.addEventListener('pointerdown',e=>{e.preventDefault();const x=e.clientX,y=e.clientY;audioKick();
  if(screen==='play'&&G&&!G.paused){
   if(G.endT>0)return; // SHIFT OVER banner: swallow taps
+  if(G.mal&&!(ctl.pauseRect&&inR(x,y,ctl.pauseRect,8))){malTap();return;}
   if(ctl.pauseRect&&inR(x,y,ctl.pauseRect,8)){G.paused=true;releaseAll();SFX.click();return;}
   if(ctl.camRect&&inR(x,y,ctl.camRect,4)){setCam(save.cam==='close'?'std':'close');return;}
   for(let i=0;i<LEVERS.length;i++){const L=LEVERS[i];if(L.id===null&&inR(x,y,L.rect,18*U)){L.id=e.pointerId;L.y0=y;L.val=0;try{cv.setPointerCapture(e.pointerId);}catch(_){}return;}}
@@ -940,6 +990,7 @@ cv.addEventListener('touchstart',blockTouch,{passive:false});cv.addEventListener
 document.addEventListener('contextmenu',e=>e.preventDefault());
 window.addEventListener('keydown',e=>{keys[e.code]=true;audioInit();
  if(screen==='play'&&G&&(e.code==='Escape'||e.code==='KeyP')){G.paused=!G.paused;}
+ else if(screen==='play'&&G&&G.mal&&!G.paused&&!e.repeat&&(e.code==='Space'||e.code==='Enter'))malTap();
  else if((e.code==='Enter'||e.code==='Space')&&(screen!=='play'||(G&&G.paused))){const b=btns.find(b=>b.primary);if(b){SFX.click();b.fn();}}
  if(e.code.startsWith('Arrow')||e.code==='Space')e.preventDefault();});
 window.addEventListener('keyup',e=>{keys[e.code]=false;});
@@ -1005,7 +1056,7 @@ function drawTitle(){drawMenuBG();btns=[];const u=U,land=W>H*1.15,sl=SAFE.l,sr=S
  const go=()=>{if(!save.seenHelp){helpNext=true;screen='howto';}else screen='intro';},gar=()=>{garageFrom='title';screen='garage';};
  if(land){const rx=tx+R+26*u,bw=Math.min(210*u,W-sr-rx-14*u),bh=54*u;
   button(rx,ty-bh-6*u,bw,bh,'PLAY',go,{primary:true,col:BTN_GREEN,size:24*u});txt('SHIFT '+save.shift,rx+bw/2,ty-bh-16*u,12*u,'#fff');
-  button(rx,ty+8*u,bw,bh*.8,'GARAGE',gar,{col:BTN_PURP,size:17*u});
+  button(rx,ty+8*u,bw,bh*.8,'GARAGE',gar,{col:BTN_PURP,size:17*u});button(rx,ty+8*u+bh*.8+8*u,bw,bh*.66,'POWER-UPS',()=>{powerFrom='title';screen='powerups';},{col:BTN_TEAL,size:14*u});
   const lw=Math.min(170*u,tx-R-26*u-sl-14*u),lx=tx-R-26*u-lw,sh=30*u;let yy=ty-2*sh-14*u;
   txt('CASH $'+save.cash,lx+lw/2,yy-30*u,13*u,'#5dff7a');txt('BEST SHIFT $'+save.best,lx+lw/2,yy-13*u,11*u,'#fff');
   button(lx,yy,lw,sh,'HOW TO PLAY',()=>{helpNext=false;screen='howto';},{col:BTN_TEAL,size:11*u});yy+=sh+6*u;
@@ -1014,7 +1065,7 @@ function drawTitle(){drawMenuBG();btns=[];const u=U,land=W>H*1.15,sl=SAFE.l,sr=S
   button(lx,yy,lw,sh,resetArm>T?'SURE? TAP':'NEW GAME',()=>{if(resetArm>T){const m=save.mute;save=defSave();save.mute=m;writeSave();resetArm=0;}else resetArm=T+3;},{col:BTN_RED,size:10*u});}
  else{const bw=Math.min(300*u,W*.82),bh=54*u;let yy=Math.max(ty+R+30*u,tickY-(54+10+42+10+34+40)*u);
   button(W/2-bw/2,yy,bw,bh,'PLAY  •  SHIFT '+save.shift,go,{primary:true,col:BTN_GREEN,size:20*u});yy+=bh+10*u;const hw=(bw-10*u)/2;
-  button(W/2-bw/2,yy,hw,bh*.78,'GARAGE',gar,{col:BTN_PURP,size:15*u});button(W/2+5*u,yy,hw,bh*.78,'HOW TO PLAY',()=>{helpNext=false;screen='howto';},{col:BTN_TEAL,size:12*u});yy+=bh*.78+10*u;
+  {const w3=(bw-16*u)/3;button(W/2-bw/2,yy,w3,bh*.78,'GARAGE',gar,{col:BTN_PURP,size:12*u});button(W/2-bw/2+w3+8*u,yy,w3,bh*.78,'POWER-UPS',()=>{powerFrom='title';screen='powerups';},{col:BTN_TEAL,size:11*u});button(W/2-bw/2+2*(w3+8*u),yy,w3,bh*.78,'HOW TO',()=>{helpNext=false;screen='howto';},{col:BTN_TEAL,size:11*u});}yy+=bh*.78+10*u;
   const sw2=(bw-20*u)/3,sh=Math.min(34*u,Math.max(26*u,tickY-yy-46*u));
   button(W/2-bw/2,yy,sw2,sh,save.mute?'SOUND OFF':'SOUND ON',()=>setMute(!save.mute),{col:BTN_TEAL,size:10*u});
   button(W/2-bw/2+sw2+10*u,yy,sw2,sh,save.easy?'STEER: SCREEN':'STEER: FORKLIFT',()=>{save.easy=!save.easy;writeSave();},{col:BTN_TEAL,size:10*u});
@@ -1022,7 +1073,7 @@ function drawTitle(){drawMenuBG();btns=[];const u=U,land=W>H*1.15,sl=SAFE.l,sr=S
   if(yy<tickY-6*u)txt('CASH $'+save.cash+'   •   BEST SHIFT $'+save.best,W/2,yy,12*u,'#fff');}
  drawTicker(tickY,th);drawCheatPop();}
 // scrolling tips along the bottom of the home screen
-const TIPS=['Stick up = forward, stick down = reverse','Push the stick left or right alone to spin in place','Forks start at pickup height: drive straight under a load','Keep loads LOW while you drive','Hard turns and hard braking make loads slide off','FRAGILE crates: drive gently!','Gold $ crates pay big, and go to Rack C only','Letter crates go to their matching rack: A, B or C','Raise the forks to shelf height BEFORE driving into a rack','Green light = truck ready. Empty it before its timer runs out','Watch out for coworkers. The BOSS is always watching!','Battery low? Park on the blue CHARGER pad','Staging full? Rack some loads to free up spots','Spend cash in the GARAGE: speed, lift, stability and more','Prefer push-where-you-go steering? Set STEER: SCREEN'];
+const TIPS=['Stick up = forward, stick down = reverse','Push the stick left or right alone to spin in place','Forks start at pickup height: drive straight under a load','Keep loads LOW while you drive','Hard turns and hard braking make loads slide off','FRAGILE crates: drive gently!','Gold $ crates pay big, and go to Rack C only','Letter crates go to their matching rack: A, B or C','Raise the forks to shelf height BEFORE driving into a rack','Green light = truck ready. Empty it before its timer runs out','Watch out for coworkers. The BOSS is always watching!','Battery low? Park on the blue CHARGER pad','Staging full? Rack some loads to free up spots','Spend cash in the GARAGE: speed, lift, stability and more','Prefer push-where-you-go steering? Set STEER: SCREEN','Buy a SWAMPER in POWER-UPS: a helper racks your staged boxes for a shift'];
 function drawTicker(y,h){const u=U,fs=Math.max(11,Math.round(13*u));
  ctx.fillStyle='rgba(26,16,40,.88)';ctx.fillRect(0,y,W,h+SAFE.b);ctx.fillStyle='#ffcf3a';ctx.fillRect(0,y,W,3);ctx.fillStyle=OL;ctx.fillRect(0,y-2,W,2);
  const sep=fs*2.4;let tot=0;const ws=TIPS.map(s=>{const w=txtW(s,fs);tot+=w+sep;return w;});
@@ -1075,7 +1126,7 @@ function drawSummary(){drawMenuBG();btns=[];const u=U,S=G.summary,st=S.st;sumT+=
 let buyFlash={};
 function drawGarage(){drawMenuBG();btns=[];const u=U,nar=W<520;txt('GARAGE',nar?W/2+52*u:W/2,26*u,nar?22*u:26*u,'#ffe14d');txt('$'+save.cash,W-14*u,26*u,20*u,'#5dff7a','right');button(108*u,10*u,nar?72*u:90*u,32*u,nar?'+$5K':'+$5K TEST',testCash,{col:BTN_RED,size:11*u});
  button(10*u,10*u,90*u,32*u,'MENU',()=>{screen='title';},{col:BTN_TEAL,size:12*u});
- {const tw=110*u,ty=46*u;button(W/2-tw-4*u,ty,tw,28*u,(garageTab==='up'?'▶ ':'')+'UPGRADES',()=>{garageTab='up';},{col:garageTab==='up'?BTN_GREEN:BTN_TEAL,size:12*u});button(W/2+4*u,ty,tw,28*u,(garageTab==='paint'?'▶ ':'')+'PAINT',()=>{garageTab='paint';},{col:garageTab==='paint'?BTN_GREEN:BTN_PURP,size:12*u});}
+ {const tw=Math.min(110*u,(W-24*u)/3-8*u),ty=46*u;button(W/2-tw*1.5-8*u,ty,tw,28*u,(garageTab==='up'?'▶ ':'')+'UPGRADES',()=>{garageTab='up';},{col:garageTab==='up'?BTN_GREEN:BTN_TEAL,size:12*u});button(W/2-tw/2,ty,tw,28*u,(garageTab==='paint'?'▶ ':'')+'PAINT',()=>{garageTab='paint';},{col:garageTab==='paint'?BTN_GREEN:BTN_PURP,size:12*u});button(W/2+tw/2+8*u,ty,tw,28*u,'POWER-UPS',()=>{powerFrom='garage';screen='powerups';},{col:BTN_TEAL,size:11*u});}
  if(boostOn())boostBadge(W/2,H-44*u-24*u);
  if(garageTab==='paint'){drawPaint(u);const bw=Math.min(280*u,W*.6),bh=44*u;button(W/2-bw/2,H-bh-10*u,bw,bh,'START SHIFT '+save.shift,()=>{screen='intro';},{primary:true,col:BTN_GREEN});drawCheatPop();return;}
  const cols=W>H*1.2?3:W>520?2:1,rowsN=Math.ceil(STATS.length/cols),top=82*u,bottom=(boostOn()?84:64)*u,gap=10*u;
@@ -1116,6 +1167,23 @@ function drawPaint(u){const land=W>H*1.15,top=84*u,bot=H-64*u-(boostOn()?20*u:0)
    ctx.lineWidth=2.5;ctx.strokeStyle=OL;rr(ctx,sx,sy,sw,sw,sw*.3);ctx.stroke();if(k==='auto')txt('A',sx+sw/2,sy+sw/2,Math.max(10,sw*.42),'#fff','center',{stroke:3,shadow:false});
    btns.push({x:sx,y:sy,w:sw,h:sw,fn:()=>setPaint(part,k),label:'paint:'+part+':'+k});});});
  txt('PAINT IS FREE • AUTO = colour by upgrade level',land?rx+rw/2:W/2,Math.min(bot+6*u,ry+3*rh+4*u),10,'#fff','center',{stroke:3,shadow:false});}
+// ---- POWER-UPS screen (grid of cards; add entries to POWERUPS) ----
+let powerFrom='title';
+function pill(t,x,y,align,c1,c2){const u=U,fs=Math.max(10,10*u),w=txtW(t,fs)+16*u,h=18*u,x0=align==='left'?x:x-w/2;panel(x0,y-h/2,w,h,9*u,c1,c2);txt(t,x0+w/2,y,fs,'#fff','center',{stroke:3,shadow:false});}
+function powerIcon(id,cx,cy,r){if(id==='swamper'){const p={type:'swamper',col:'#3dff5a'};ctx.fillStyle='rgba(255,255,255,.18)';ctx.beginPath();ctx.arc(cx,cy,r,0,7);ctx.fill();ctx.lineWidth=3;ctx.strokeStyle=OL;ctx.stroke();
+  ctx.save();ctx.translate(cx-r*.15,cy);ctx.rotate(-Math.PI/2);const s=r*1.5/30;ctx.scale(s,s);ctx.drawImage(personSprite(p),-15,-15,30,30);ctx.restore();
+  ctx.drawImage(boxSprite('tag','C'),cx+r*.05,cy-r*.75,r*.7,r*.7);}}
+function drawPowerups(){drawMenuBG();btns=[];const u=U;txt('POWER-UPS',W/2,26*u,26*u,'#ffe14d');txt('$'+save.cash,W-14*u,26*u,20*u,'#5dff7a','right');
+ button(10*u,10*u,90*u,32*u,'BACK',()=>{screen=powerFrom;},{col:BTN_TEAL,size:12*u});
+ const n=POWERUPS.length,cols=Math.max(1,Math.min(n,Math.floor((W-20*u)/(260*u)))),cw=Math.min(300*u,(W-20*u-10*u*(cols-1))/cols),ch=Math.min(200*u,H-120*u),x0=W/2-(cols*cw+10*u*(cols-1))/2,top=58*u;
+ POWERUPS.forEach((pw,i)=>{const c=i%cols,r=Math.floor(i/cols),x=x0+c*(cw+10*u),y=top+r*(ch+10*u),own=(save.powers&&save.powers[pw.id])>0,can=save.cash>=pw.price;
+  panel(x,y,cw,ch,14*u,own?'rgba(40,150,70,.95)':undefined,own?'rgba(20,90,40,.95)':undefined);const ir=Math.min(34*u,ch*.2);powerIcon(pw.id,x+14*u+ir,y+14*u+ir,ir);
+  txt(pw.name,x+28*u+ir*2,y+22*u,18*u,'#ffe14d','left');txt('$'+pw.price+' • 1 SHIFT',x+28*u+ir*2,y+44*u,12*u,'#5dff7a','left',{stroke:3,shadow:false});
+  wrap(pw.desc,x+14*u,y+28*u+ir*2,cw-28*u,11*u,'#fff');const bh=36*u;
+  if(own)button(x+14*u,y+ch-bh-12*u,cw-28*u,bh,'ACTIVE: NEXT SHIFT ✓',()=>{},{col:BTN_GREEN,size:13*u});
+  else button(x+14*u,y+ch-bh-12*u,cw-28*u,bh,can?'BUY  $'+pw.price:'NEED $'+pw.price,()=>{if(save.cash>=pw.price){save.cash-=pw.price;save.powers=save.powers||{};save.powers[pw.id]=1;writeSave();SFX.buy();}else SFX.bad();},{col:can?BTN_GREEN:BTN_RED,disabled:!can,size:13*u});});
+ txt('More power-ups coming soon!',W/2,Math.min(H-50*u,top+ch+24*u),12*u,'#fff');
+ const bw=Math.min(280*u,W*.6),bh=40*u;button(W/2-bw/2,H-bh-8*u,bw,bh,'START SHIFT '+save.shift,()=>{screen='intro';},{primary:true,col:BTN_GREEN});drawCheatPop();}
 let quitArm=0;
 function drawPause(){ctx.fillStyle='rgba(10,4,24,.7)';ctx.fillRect(0,0,W,H);btns=[];const u=U;txt('PAUSED',W/2,H*.13,34*u,'#ffe14d');
  if(PERF.show)txt(perfLabel(true),W/2,H*.13+26*u,11*u,'#9dffb0','center',{stroke:2,shadow:false});
@@ -1135,7 +1203,7 @@ function setQuality(q){q=clamp(q,0,2);if(q===QL)return;QL=q;save.q=q;writeSave()
 // ---------- main loop ----------
 function render(){ctx.setTransform(1,0,0,1,0,0);
  if(screen==='play'&&G){renderWorld();drawHUD();}
- else if(screen==='title')drawTitle();else if(screen==='howto')drawHowto();else if(screen==='intro')drawIntro();else if(screen==='summary')drawSummary();else if(screen==='garage')drawGarage();}
+ else if(screen==='title')drawTitle();else if(screen==='howto')drawHowto();else if(screen==='intro')drawIntro();else if(screen==='summary')drawSummary();else if(screen==='garage')drawGarage();else if(screen==='powerups')drawPowerups();}
 let last=performance.now();
 const API={manual:false,errors:[]};
 // perf meter + adaptive quality: 3 slow half-second windows in a row (<~42fps) during play -> drop a level
