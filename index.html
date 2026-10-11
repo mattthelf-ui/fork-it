@@ -14,6 +14,8 @@
 </head><body><canvas id="c"></canvas>
 <script>
 'use strict';
+const TEST_CASH=true; // secret test cash: 5 quick taps on the home-screen logo (false = off)
+const TEST_CASH_BUTTON=false; // garage +$5K TEST button (hidden for public release)
 // ================= FORK IT — core =================
 const cv=document.getElementById('c');let ctx=cv.getContext('2d',{alpha:false});
 let W=0,H=0,DPR=1,U=1;
@@ -76,8 +78,11 @@ function paintPick(part){const p=save.paint&&save.paint[part];return p&&PAL[p]?P
 const POWERUPS=[{id:'swamper',name:'SWAMPER',price:300,desc:'A helper on foot racks your STAGED boxes for one shift (about one every 15-20s). Don\'t run him over!'}];
 function squash(e){return .2*Math.exp(-e*6)*Math.cos(e*24);}
 function upCost(lv){return Math.round(80*Math.pow(1.7,lv)/5)*5;}
-function statVal(k,lv){switch(k){case'speed':return 150*(1+.12*lv);case'accel':return 1800*(1+.16*lv);case'turn':return 3.0*(1+.1*lv);case'lift':return .65*(1+.18*lv);case'stab':return 1/(1+.16*lv);case'batt':return 1+.25*lv;}return 1;}
-function statPct(k,lv){return k==='stab'?Math.round(100/statVal(k,lv)):Math.round(100*statVal(k,lv)/statVal(k,0));}
+// base level offset (0 = original default stats)
+const STAT_BASE_LV=0;
+function statVal(k,lv){return statRaw(k,lv+STAT_BASE_LV);}
+function statRaw(k,lv){switch(k){case'speed':return 150*(1+.12*lv);case'accel':return 1800*(1+.16*lv);case'turn':return 3.0*(1+.1*lv);case'lift':return .65*(1+.18*lv);case'stab':return 1/(1+.16*lv);case'batt':return 1.55+.25*lv;}return 1;}
+function statPct(k,lv){return k==='stab'?Math.round(100*statVal(k,0)/statVal(k,lv)):Math.round(100*statVal(k,lv)/statVal(k,0));}
 function statFx(k,lv){const v=statVal(k,lv);switch(k){case'speed':return (v/10).toFixed(1)+' km/h';case'accel':return 'top speed in '+(statVal('speed',0)/v).toFixed(2)+'s';case'turn':return Math.round(v*57.3)+'°/sec';case'lift':return 'full lift: '+(1/v).toFixed(1)+'s';case'stab':return 'slip rate: '+Math.round(v*100)+'%';case'batt':return '~'+(v*2).toFixed(1)+' min full-speed';}return'';}
 function defSave(){return{cash:0,shift:1,best:0,stats:{speed:0,accel:0,turn:0,lift:0,stab:0,batt:0},mute:false,easy:false,seenHelp:false,shifts:0,gfx:'auto',q:2,fps:false,cam:'std',steerV:2,paint:{body:null,cage:null,forks:null},powers:{}};}
 let save=defSave();
@@ -147,7 +152,7 @@ function rollItem(n){const pv=Math.min(.62,.18+.1*(n-1));if(Math.random()>pv)ret
  if(t==='tag')return{type:'tag',tag:pick(['A','B','C'])};if(t==='gold')return{type:'gold',tag:'C'};return{type:'fragile'};}
 // Pacing: truck timer = (40 + 20 x loads) x tightening factor; gap = max(34, 42 - 1.5(n-1)) s,
 // ~3 loads per truck through shift 8 (lo = 3 + floor((n-1)/8)); timers x1.2 on shift 1 tightening 6%/shift (min x0.75).
-function shiftPace(n){return{gap:Math.max(34,42-1.5*(n-1)),tf:n>=5?Math.max(.75,1-.04*(n-5)):1.2-.06*(n-1),lo:Math.min(6,3+Math.floor((n-1)/8))};}
+function shiftPace(n){return{gap:Math.max(34,42-1.5*(n-1)),tf:n>=5?Math.max(.75,1.1-.04*(n-5)):1.2-.06*(n-1),lo:Math.min(6,3+Math.floor((n-1)/8))};}
 // loads per truck: 2-3 on the first two shifts (learning), then lo with a 25% chance of one extra
 function truckLoads(n,P){return n===1?2:n===2?(Math.random()<.5?2:3):P.lo+(Math.random()<.25?1:0);}
 function genSchedule(n){const P=shiftPace(n),out=[];let t=1;
@@ -177,7 +182,7 @@ function startShift(){const n=save.shift;btns=[];const _S=effStats(),_bk=boostOn
   st:{put:0,bonus:0,speed:0,damage:0,fines:0,done:0,missed:0,total:0,racked:0,drops:0,crashes:0,bumps:0,strikes:0,clutter:0,clutterFines:0},
   earn:0,banner:null,hint:'',hintCol:'#fff',warn:'',bossCD:2,msgCD:{},camX:750,camY:250,tickT:0};G.S=_S;G.boostK=_bk;
  G.st.total=G.sched.length;
- if(save.powers&&save.powers.swamper>0){save.powers.swamper=0;writeSave();G.swamper=true;G.people.push(makeSwamper());}
+ if(save.powers&&save.powers.swamper>0){G.swamper=true;G.people.push(makeSwamper());}
  screen='play';
 }
 
@@ -386,12 +391,12 @@ function interact(dt,inp){const f=G.fl,P=forkPts(f);G.hint='';G.hintCol='#fff';
   if(f.carry){const b2=f.carry,sp=Math.abs(f.v),lat=Math.abs(f.v*f.w),lon=Math.abs(f.accel);let d=0;
    // slip only from hard turns or hard braking; a raised or fragile load makes both touchier (gentle driving is always safe)
    const fr=isFrag(b2),turnT=fr?95:115;
-   const k=(1+Math.max(0,f.h-.3)*1.6)*(fr?1.4:1)*statVal('stab',(G.S||save.stats).stab);
+   const k=(1+Math.max(0,f.h-.3)*1.6)*(fr?1.2:1)*statVal('stab',(G.S||save.stats).stab);
    d+=Math.max(0,lat-turnT)/320;
    if(sp<30)d+=Math.max(0,Math.abs(f.w)-1)*.12; // spinning in place with a load: small slip (~0.12/s at full spin)
    d*=k;
    // braking: speed shed by the brakes shoves the load forward (a full-speed stop with a low box ~ a quarter of a drop)
-   const bk=(f.brakeDv||0)/150*.26*k;
+   const bk=(f.brakeDv||0)/150*.20*k;
    const ps=f.slip;f.slip=clamp(f.slip+bk+(d>.04||bk>0?d:-.45)*dt,0,1.2);
    if(f.slip>.35&&f.slip>ps+1e-4){f.creakT=(f.creakT||0)-dt;if(f.creakT<=0){f.creakT=.45-.25*Math.min(1,f.slip);SFX.creak();}}
    if(f.slip>=1)dropLoad();}
@@ -477,7 +482,7 @@ function swamperAI(p,dt){const f=G.fl,P=forkPts(f);
 // Stalls the forklift (no drive/lift) until the player taps ~12-15 times quickly; the bar drains if they stop.
 const MAL_P=.0009,MAL_NEED=12;
 function updateMalfunction(dt,inp){const f=G.fl;
- if(G.mal){const m=G.mal;m.t+=dt;if(m.fill>=MAL_NEED-.001)m.fill=MAL_NEED;else m.fill=Math.max(0,m.fill-dt*1.0);f.v*=Math.pow(.02,dt);m.smk-=dt;if(m.smk<=0){m.smk=.14;puff(f.x-Math.cos(f.a)*20,f.y-Math.sin(f.a)*20,2,'rgba(90,85,100,');}
+ if(G.mal){const m=G.mal;m.t+=dt;if(m.fill>=MAL_NEED-.001)m.fill=MAL_NEED;else m.fill=Math.max(0,m.fill-dt*.5);f.v*=Math.pow(.02,dt);m.smk-=dt;if(m.smk<=0){m.smk=.14;puff(f.x-Math.cos(f.a)*20,f.y-Math.sin(f.a)*20,2,'rgba(90,85,100,');}
   if(m.fill>=MAL_NEED){G.mal=null;SFX.clunk();SFX.go();pop(f.x,f.y-40,'FIXED!','#3dff5a',22,1.2);puff(f.x,f.y,6);}return;}
  if(G.malDone||G.endT>0)return;
  const driving=Math.abs(f.v)>10||Math.abs(inp.thr)>.1;if(!driving)return;
@@ -502,10 +507,11 @@ function finishShift(){const st=G.st,n=G.shift;
  // safety bonus scales with the share of trucks emptied (done / (done + missed)): sitting idle earns nothing
  const res=st.done+st.missed,sbPct=res?st.done/res:0;const safetyBonus=G.endReason==='fired'?0:Math.round(G.safety*(.6+.1*n)*sbPct);
  const unfinished=G.trucks.filter(t=>t.state!=='leaving'||t.result===null).length+G.queue.length+G.sched.length;
- // put-away completion: 95%+ of the shift's delivered loads racked = big bonus (2x the top safety bonus); 100% = PERFECT SHIFT boost
+ // put-away completion: 90%+ (or all but one) of the shift's delivered loads racked = big bonus (2x the top safety bonus); 100% = PERFECT SHIFT boost
  const loads=st.loadsIn||0,paPct=loads?st.racked/loads:0,ok=G.endReason!=='fired'&&loads>0;
- const paBonus=ok&&paPct>=.95?Math.round(200*(.6+.1*n)):0;let perfect=null;
+ const paBonus=ok&&(paPct>=.9||st.racked>=loads-1)?Math.round(200*(.6+.1*n)):0;let perfect=null;
  if(G.boostK&&save.boost&&save.boost.left>0)save.boost.left--;
+ if(G.swamper&&save.powers)save.powers.swamper=0; // swamper is used up when the shift finishes (restart/quit keeps it)
  if(ok&&paPct>=1){const can=STATS.filter(s=>save.stats[s.k]<MAXLV);if(can.length){const s=can[Math.floor(Math.random()*can.length)];save.boost={k:s.k,left:2};perfect=s.n;}}
  const total=st.put+st.bonus+st.speed+safetyBonus+paBonus-st.damage-st.fines-st.clutterFines;
  const prevCash=save.cash;save.cash=Math.max(0,save.cash+total);const best=total>save.best;if(best)save.best=total;
@@ -870,9 +876,7 @@ function drawHUD(){ctx.setTransform(DPR,0,0,DPR,0,0);btns=[];const f=G.fl,u=U,m=
  // controls
  drawControls();
  if(G.mal&&!G.paused){const m=G.mal,u=U,fl=Math.sin(T*14)>0,bw=Math.min(340*u,W*.8),bh=74*u,bx=W/2-bw/2,by=H*.36-bh/2;panel(bx,by,bw,bh,14*u,fl?'rgba(255,70,50,.96)':'rgba(200,30,30,.96)','rgba(120,10,20,.96)');
-  txt('MALFUNCTION! TAP TAP TAP!',W/2,by+22*u,Math.min(20*u,bw/15),fl?'#fff':'#ffe14d');bar(bx+18*u,by+42*u,bw-36*u,16*u,m.fill/MAL_NEED,'#3dff5a');txt('tap anywhere to fix it',W/2,by+bh+12*u,11*u,'#fff');}
- if(G.mal&&!G.paused){const m=G.mal,u=U,fl=Math.sin(T*14)>0,bw=Math.min(340*u,W*.8),bh=74*u,bx=W/2-bw/2,by=H*.36-bh/2;panel(bx,by,bw,bh,14*u,fl?'rgba(255,70,50,.96)':'rgba(200,30,30,.96)','rgba(120,10,20,.96)');
-  txt('MALFUNCTION! TAP TAP TAP!',W/2,by+22*u,Math.min(20*u,bw/15),fl?'#fff':'#ffe14d');bar(bx+18*u,by+42*u,bw-36*u,16*u,m.fill/MAL_NEED,'#3dff5a');txt('tap anywhere to fix it',W/2,by+bh+12*u,11*u,'#fff');}
+  txt('MALFUNCTION! TAP TAP TAP!',W/2,by+22*u,Math.min(20*u,bw/15),fl?'#fff':'#ffe14d');bar(bx+18*u,by+42*u,bw-36*u,16*u,m.fill/MAL_NEED,'#3dff5a');txt('TAP ANYWHERE TO FIX IT!',W/2,by+bh+14*u,14*u,fl?'#ffe14d':'#fff','center',{stroke:4});}
  // fork gauge
  const gr=ctl.gauge;drawGauge(gr.x,gr.y,gr.w,gr.h);
  // hint
@@ -1051,7 +1055,7 @@ function drawTitle(){drawMenuBG();btns=[];const u=U,land=W>H*1.15,sl=SAFE.l,sr=S
  const tot=upTotal(save.stats);{const s='UPGRADES '+tot+'/'+(STATS.length*MAXLV),cw=txtW(s,11*u)+22*u,cy=ty+R+12*u;panel(tx-cw/2,cy-10*u,cw,20*u,10*u,'rgba(90,40,160,.95)','rgba(60,24,120,.95)');txt(s,tx,cy,11*u,tot?'#5dff7a':'#fff','center',{stroke:3,shadow:false});}if(boostOn())boostBadge(tx,ty-R-14*u);
  // logo (squashy bounce)
  bigTitle('FORK IT',W/2,ly,ls,1+.035*Math.sin(T*3.2));
- {const lw=ls*3.6,lh=ls*1.2;btns.push({x:W/2-lw/2,y:ly-lh/2,w:lw,h:lh,fn:()=>{logoTaps=logoTaps.filter(t=>T-t<2);logoTaps.push(T);if(logoTaps.length>=5){logoTaps=[];testCash();}}});}
+ if(TEST_CASH){const lw=ls*3.6,lh=ls*1.2;btns.push({x:W/2-lw/2,y:ly-lh/2,w:lw,h:lh,fn:()=>{logoTaps=logoTaps.filter(t=>T-t<2);logoTaps.push(T);if(logoTaps.length>=5){logoTaps=[];testCash();}}});}
  txt('WAREHOUSE MAYHEM',W/2,ly+ls*.66,Math.max(11,ls*.2),'#fff');
  const go=()=>{if(!save.seenHelp){helpNext=true;screen='howto';}else screen='intro';},gar=()=>{garageFrom='title';screen='garage';};
  if(land){const rx=tx+R+26*u,bw=Math.min(210*u,W-sr-rx-14*u),bh=54*u;
@@ -1111,7 +1115,7 @@ function drawIntro(){drawMenuBG();btns=[];const u=U,n=save.shift,info=shiftInfo(
 function drawSummary(){drawMenuBG();btns=[];const u=U,S=G.summary,st=S.st;sumT+=RDT;
  txt(S.reason==='fired'?'SENT HOME!':'SHIFT '+S.n+' COMPLETE',W/2,28*u,24*u,S.reason==='fired'?'#ff5050':'#ffe14d');
  const rows=[['TRUCKS EMPTIED ON TIME',st.done+' / '+st.total,'#fff'],['PUT-AWAY PAY ('+st.racked+' loads)','+$'+st.put,'#5dff7a'],['ON-TIME TRUCK BONUS','+$'+st.bonus,'#5dff7a'],['SPEED BONUS','+$'+st.speed,'#5dff7a'],
-  ['SAFETY BONUS ('+S.safety+'% safe × '+(S.sbPct==null?100:S.sbPct)+'% trucks)','+$'+S.safetyBonus,'#5dff7a'],...(S.paBonus?[['95%+ PUT AWAY ('+S.paPct+'% racked)','+$'+S.paBonus,'#ffe14d']]:[]),['DAMAGES ('+st.drops+' dropped)','-$'+st.damage,'#ff6060'],['LATE TRUCK FINES ('+st.missed+' missed)','-$'+st.fines,'#ff6060'],['AISLE CLUTTER ('+(st.clutter||0)+' loads)','-$'+(st.clutterFines||0),'#ff6060'],
+  ['SAFETY BONUS ('+S.safety+'% safe × '+(S.sbPct==null?100:S.sbPct)+'% trucks)','+$'+S.safetyBonus,'#5dff7a'],...(S.paBonus?[['90%+ PUT AWAY ('+S.paPct+'% racked)','+$'+S.paBonus,'#ffe14d']]:[]),['DAMAGES ('+st.drops+' dropped)','-$'+st.damage,'#ff6060'],['LATE TRUCK FINES ('+st.missed+' missed)','-$'+st.fines,'#ff6060'],['AISLE CLUTTER ('+(st.clutter||0)+' loads)','-$'+(st.clutterFines||0),'#ff6060'],
   ['INCIDENTS',st.crashes+' crashes • '+st.strikes+' fork strikes • '+st.bumps+' people','#ffb030']];
  const pw=Math.min(520*u,W*.92),top=50*u,rh=Math.min(24*u,(H-top-(S.perfect?150:130)*u)/rows.length),px=W/2-pw/2;panel(px,top,pw,rh*rows.length+14*u,12*u);
  rows.forEach((r,i)=>{if(sumT<.25+i*.18)return;const y=top+10*u+rh*i+rh/2;txt(r[0],px+14*u,y,Math.min(12*u,rh*.5),'#ffcf3a','left',{stroke:3});txt(r[1],px+pw-14*u,y,Math.min(13*u,rh*.55),r[2],'right',{stroke:3});});
@@ -1124,7 +1128,7 @@ function drawSummary(){drawMenuBG();btns=[];const u=U,S=G.summary,st=S.st;sumT+=
  button(W/2-bw-6*u,H-bh-10*u,bw,bh,'GARAGE',()=>{garageFrom='summary';screen='garage';},{primary:!fired,col:BTN_PURP});
  button(W/2+6*u,H-bh-10*u,bw,bh,fired?'RETRY SHIFT '+S.n:'NEXT: SHIFT '+save.shift,()=>{screen='intro';},{primary:fired,col:fired?BTN_RED:BTN_GREEN});}
 let buyFlash={};
-function drawGarage(){drawMenuBG();btns=[];const u=U,nar=W<520;txt('GARAGE',nar?W/2+52*u:W/2,26*u,nar?22*u:26*u,'#ffe14d');txt('$'+save.cash,W-14*u,26*u,20*u,'#5dff7a','right');button(108*u,10*u,nar?72*u:90*u,32*u,nar?'+$5K':'+$5K TEST',testCash,{col:BTN_RED,size:11*u});
+function drawGarage(){drawMenuBG();btns=[];const u=U,nar=W<520;txt('GARAGE',nar?W/2+52*u:W/2,26*u,nar?22*u:26*u,'#ffe14d');txt('$'+save.cash,W-14*u,26*u,20*u,'#5dff7a','right');if(TEST_CASH_BUTTON)button(108*u,10*u,nar?72*u:90*u,32*u,nar?'+$5K':'+$5K TEST',testCash,{col:BTN_RED,size:11*u});
  button(10*u,10*u,90*u,32*u,'MENU',()=>{screen='title';},{col:BTN_TEAL,size:12*u});
  {const tw=Math.min(110*u,(W-24*u)/3-8*u),ty=46*u;button(W/2-tw*1.5-8*u,ty,tw,28*u,(garageTab==='up'?'▶ ':'')+'UPGRADES',()=>{garageTab='up';},{col:garageTab==='up'?BTN_GREEN:BTN_TEAL,size:12*u});button(W/2-tw/2,ty,tw,28*u,(garageTab==='paint'?'▶ ':'')+'PAINT',()=>{garageTab='paint';},{col:garageTab==='paint'?BTN_GREEN:BTN_PURP,size:12*u});button(W/2+tw/2+8*u,ty,tw,28*u,'POWER-UPS',()=>{powerFrom='garage';screen='powerups';},{col:BTN_TEAL,size:11*u});}
  if(boostOn())boostBadge(W/2,H-44*u-24*u);
