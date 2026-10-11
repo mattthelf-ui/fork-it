@@ -938,7 +938,7 @@ function leverKnobSprite(L,name){const r=L.rect,u=U;return cached('lk'+name+Math
   g.fillStyle=OL;for(const xx of [-6,0,6])g.fillRect(w/2+xx*u-1,h*.32,2,h*.36);rr(g,0,0,w,h,rad);g.lineWidth=3;g.strokeStyle=OL;g.stroke();c.dw=w+4;c.dh=h+7;return c;});}
 const LEVER_DEF=['LIFT','UP','DOWN'];
 function drawControls(){const u=U,st=ctl.stick,on=st.id!==null;
- const bx=on?clamp(st.bx,st.r+4+SAFE.l,W-st.r-4-SAFE.r):st.hx,by=on?clamp(st.by,st.r+4+SAFE.t,H-st.r-4-SAFE.b):st.hy;
+ const bx=st.hx,by=st.hy; // stationary stick
  ctx.globalAlpha=on?.9:.5;const sb=stickBaseSprite(st.r);ctx.drawImage(sb,bx-sb.d/2,by-sb.d/2,sb.d,sb.d);
  const kx=bx+(on?clamp(st.dx,-st.r,st.r):0),ky=by+(on?clamp(st.dy,-st.r,st.r):0);const kn=knobSprite();ctx.drawImage(kn,kx-kn.d/2,ky-kn.d/2,kn.d,kn.d);ctx.globalAlpha=1;
  if(!on)txt(save.easy?'DRIVE (SCREEN)':'DRIVE',bx,by+st.r+11*u,11,'#ffffff','center',{stroke:3,shadow:false});
@@ -976,13 +976,13 @@ cv.addEventListener('pointerdown',e=>{e.preventDefault();const x=e.clientX,y=e.c
   if(ctl.pauseRect&&inR(x,y,ctl.pauseRect,8)){G.paused=true;releaseAll();SFX.click();return;}
   if(ctl.camRect&&inR(x,y,ctl.camRect,4)){setCam(save.cam==='close'?'std':'close');return;}
   for(let i=0;i<LEVERS.length;i++){const L=LEVERS[i];if(L.id===null&&inR(x,y,L.rect,18*U)){L.id=e.pointerId;L.y0=y;L.val=0;try{cv.setPointerCapture(e.pointerId);}catch(_){}return;}}
-  const st=ctl.stick;if(x<W*.55&&st.id===null){st.id=e.pointerId;st.bx=x;st.by=y;st.dx=0;st.dy=0;try{cv.setPointerCapture(e.pointerId);}catch(_){}}
+  const st=ctl.stick,gz=st.r*2.3;if(st.id===null&&(x-st.hx)*(x-st.hx)+(y-st.hy)*(y-st.hy)<gz*gz){st.id=e.pointerId;st.bx=st.hx;st.by=st.hy;onMove(e.pointerId,x,y); /* stationary stick: fixed base, generous grab zone; knob clamps to rim */try{cv.setPointerCapture(e.pointerId);}catch(_){}}
   return;}
  tapUI(x,y);},{passive:false});
 function audioKick(){audioInit();if(AC&&AC.state==='suspended')AC.resume();}
 function onMove(id,x,y){
  for(let i=0;i<LEVERS.length;i++){const L=LEVERS[i];if(L.id===id)L.val=clamp((L.y0-y)/leverTravel(),-1,1);}
- const st=ctl.stick;if(st.id===id){let dx=x-st.bx,dy=y-st.by;const mx=st.r,d2=dx*dx+dy*dy;if(d2>mx*mx){const d=Math.sqrt(d2);st.bx+=dx/d*(d-mx);st.by+=dy/d*(d-mx);dx=x-st.bx;dy=y-st.by;}st.dx=dx;st.dy=dy;}}
+ const st=ctl.stick;if(st.id===id){let dx=x-st.hx,dy=y-st.hy;const mx=st.r,d2=dx*dx+dy*dy;if(d2>mx*mx){const d=Math.sqrt(d2);dx*=mx/d;dy*=mx/d;}st.dx=dx;st.dy=dy;}} // base never moves; knob clamps to the rim
 cv.addEventListener('pointermove',e=>{onMove(e.pointerId,e.clientX,e.clientY);},{passive:true});
 // pointerrawupdate (Chrome) delivers moves as soon as they arrive instead of aligned to frames; handling is idempotent
 if('onpointerrawupdate' in window)cv.addEventListener('pointerrawupdate',e=>{onMove(e.pointerId,e.clientX,e.clientY);},{passive:true});
