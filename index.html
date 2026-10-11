@@ -221,10 +221,7 @@ const DZPX=11; // dead zone in CSS px for stick and levers
 function stickCurve(v,dz){return Math.sign(v)*clamp((Math.abs(v)-dz)/(.8-dz),0,1);}
 function leverDZ(v,dz){return Math.abs(v)<dz?0:Math.sign(v)*Math.min(1,(Math.abs(v)-dz)/(.6-dz));} // full rate at 60% lever travel
 // softer steering at small stick input: 50% linear + 50% squared (full lock unchanged)
-// hidden steering precision from total upgrade levels (0..30): smoothstep, exactly 0 at level 0
-function steerP(){const S=(G&&G.S)||save.stats;let n=0;for(const k in S)n+=S[k]||0;const t=Math.min(1,Math.max(0,n/30));return t*t*(3-2*t);}
-// linear share .5 -> .905 with upgrades (20px push: ~0.17 -> ~0.26); full lock unchanged
-function steerCurve(s,p){const a=Math.abs(s),k=.5+.405*(p||0);return Math.sign(s)*(k*a+(1-k)*a*a);}
+function steerCurve(s){const a=Math.abs(s);return Math.sign(s)*(.5*a+.5*a*a);}
 function leverTravel(){return ctl.lift.rect?ctl.lift.rect.h/2-24*U:56;}
 function readInput(){if(testInput)return Object.assign({thr:0,st:0,lift:0},testInput);
  let thr=0,st=0,lift=0;const f=G.fl;
@@ -232,7 +229,7 @@ function readInput(){if(testInput)return Object.assign({thr:0,st:0,lift:0},testI
   const sdz=DZPX/ctl.stick.r;if(m>sdz){if(save.easy){const want=Math.atan2(dy,dx),mg=clamp((Math.min(m,1)-sdz)/(.8-sdz),0,1);
     let d=angDiff(want,f.a);if(f.easyRev){if(Math.abs(d)<Math.PI*.42)f.easyRev=false;}else if(Math.abs(d)>Math.PI*.64&&Math.abs(f.v)<60)f.easyRev=true;
     if(!f.easyRev){thr=mg*Math.max(.25,Math.cos(Math.min(Math.abs(d),1.4)));st=clamp(d*1.8,-1,1);}else{const dr=angDiff(want,f.a+Math.PI);thr=-mg*Math.max(.3,Math.cos(Math.min(Math.abs(dr),1.4)));st=-clamp(dr*1.8,-1,1);}}
-   else{thr=stickCurve(-dy,sdz);st=steerCurve(stickCurve(dx,sdz),steerP());}}}
+   else{thr=stickCurve(-dy,sdz);st=steerCurve(stickCurve(dx,sdz));}}}
  if(keys.ArrowUp)thr=1;if(keys.ArrowDown)thr=-1;if(keys.ArrowLeft)st=-1;if(keys.ArrowRight)st=1;
  if(keys.KeyW)lift=1;if(keys.KeyS)lift=-1;
   const ldz=DZPX/leverTravel();if(ctl.lift.id!==null)lift=leverDZ(ctl.lift.val,ldz);
@@ -301,8 +298,7 @@ function updateFL(dt,inp){const f=G.fl,S=G.S||save.stats;
  const target=inp.thr>=0?inp.thr*maxV:inp.thr*maxV*.6;
  let rate=acc;if(f.v*target<0)rate=acc*2.2;else if(Math.abs(target)<Math.abs(f.v))rate=acc*1.6;
  const pv=f.v;f.v=approach(f.v,target,rate*dt);f.accel=(f.v-pv)/dt;f.brakeDv=pv*target<0?Math.max(0,Math.abs(pv)-Math.abs(f.v))*1.3:0; // only reverse-stick braking shoves the load; letting go is free
- {const sp_=steerP(),tau=.025-.0152*sp_,rel=Math.abs(inp.st)<Math.abs(f.steer)&&inp.st*f.steer>=0?1-.3*sp_:1; // ease ~75ms -> ~35ms to 95%; unwinds a bit quicker when upgraded (less overshoot)
-  f.steer+=(inp.st-f.steer)*(1-Math.exp(-dt/(tau*rel))); if(sp_>0&&inp.st===0&&Math.abs(f.steer)<.02*sp_)f.steer=0;} // throttle stays instant
+ f.steer+=(inp.st-f.steer)*(1-Math.exp(-dt/.025)); // very short steering ease (~75ms to 95%); throttle stays instant
  const sp=Math.abs(f.v);
  // 3-wheel truck: ONE rear steering wheel (up to ~90 deg) -> yaw about the front-axle midpoint, even at zero speed.
  // Stick left/right = yaw rate (spins in place with no throttle, arcs tightly with it). Reversing steers car-style;
